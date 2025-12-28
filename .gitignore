@@ -1,0 +1,6 @@
+
+*.z64
+/injector/build
+*.o
+*.bin
+*.elf
