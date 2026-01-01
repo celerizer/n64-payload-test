@@ -1,24 +1,48 @@
+N64_ROOTDIR = $(N64_INST)
 N64_TARGET := mips64-elf
 N64_PREFIX := $(N64_INST)/bin/$(N64_TARGET)-
+N64_INCLUDEDIR = $(N64_ROOTDIR)/$(N64_TARGET)/include
+N64_LIBDIR = $(N64_ROOTDIR)/$(N64_TARGET)/lib
 
 CC      := $(N64_PREFIX)gcc
 LD      := $(N64_PREFIX)ld
 OBJCOPY := $(N64_PREFIX)objcopy
 
 CFLAGS := \
-    -march=vr4300 -mtune=vr4300 -mabi=32 \
-    -ffreestanding -fno-builtin -fno-stack-protector \
+    -march=vr4300 -mtune=vr4300 -mabi=o64 \
+    -G0 \
+    -ffunction-sections \
+    -fdata-sections \
+    -fno-stack-protector \
     -fno-pic \
-    -mno-gpopt -G0 \
-    -Os -Wall
+    -fomit-frame-pointer \
+    -Iultralib/include \
+    -I. \
+    -Os -Wall \
+    -DLIBDRAGON=1 \
+    -DN64 \
+    -Ilibretro-common/include \
+    -I$(N64_INCLUDEDIR) \
 
 LDFLAGS := \
     -T link.ld \
-    -nostdlib \
-    -G0
+    -L$(N64_LIBDIR) \
+    -lc -lm -ldragon \
+    -Wl,--gc-sections
 
-SRCS := main.c
-OBJS := $(SRCS:.c=.o)
+SRC_DIRS := \
+    . \
+    N64-UNFLoader \
+
+C_SRCS := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
+
+# Setup Classics Live integration
+CLASSICS_LIVE_DIR = classicslive-integration
+CL_OMIT_VFS := 1
+include classicslive-integration/classicslive-integration.mk
+C_SRCS += $(CLASSICS_LIVE_SOURCES)
+
+OBJS := $(C_SRCS:.c=.o)
 
 all: payload.bin
 
@@ -26,7 +50,7 @@ all: payload.bin
 	$(CC) $(CFLAGS) -c $< -o $@
 
 payload.elf: $(OBJS)
-	$(LD) $(LDFLAGS) $^ -o $@
+	$(CC) $^ $(LDFLAGS) -o $@
 
 payload.bin: payload.elf
 	$(OBJCOPY) -O binary $< $@
