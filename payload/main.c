@@ -2,6 +2,7 @@
 #include "classicslive-integration/cl_main.h"
 #include "N64-UNFLoader/usb.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #define CLN_STACK ((volatile signed char*)0x80600000)
@@ -61,11 +62,38 @@ static cl_error cln_abi_network_post(const char *url, char *post_data,
 {
   if (!usb_write(DATATYPE_TEXT, url, strlen(url) + 1) ||
       !usb_write(DATATYPE_TEXT, post_data, strlen(post_data) + 1))
-  {
-    return -1;
-  }
+    return CL_ERR_CLIENT_RUNTIME;
   else
-    return 0;
+    return CL_OK;
+}
+
+static cl_error cln_abi_set_pause(unsigned mode)
+{
+  return CL_OK;
+}
+
+static cl_error cln_abi_thread(cl_task_t *task)
+{
+  task->error = NULL;
+  task->handler(task);
+  if (task->callback)
+    task->callback(task->state);
+
+  if (task->state)
+    free(task->state);
+  free(task);
+
+  return CL_OK;
+}
+
+static cl_error cln_abi_user_data(cl_user_t *user, unsigned index)
+{
+  snprintf(user->username, sizeof(user->username), "clint");
+  snprintf(user->password, sizeof(user->password), "coffeecoffeefrog123");
+  user->token[0] = '\0';
+  snprintf(user->language, sizeof(user->language), "en_US");
+
+  return CL_OK;
 }
 
 static cl_abi_t cln_abi =
@@ -77,7 +105,9 @@ static cl_abi_t cln_abi =
       cln_abi_install_memory_regions,
       cln_abi_library_name,
       cln_abi_network_post,
-      NULL,
+      cln_abi_set_pause,
+      cln_abi_thread,
+      cln_abi_user_data
     },
     { NULL, NULL, NULL, NULL }
   },
