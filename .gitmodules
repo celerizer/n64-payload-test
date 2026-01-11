@@ -1,6 +1,3 @@
-[submodule "payload/ultralib"]
-	path = payload/ultralib
-	url = https://github.com/decompals/ultralib
 [submodule "payload/classicslive-integration"]
 	path = payload/classicslive-integration
 	url = https://github.com/classicslive/classicslive-integration
