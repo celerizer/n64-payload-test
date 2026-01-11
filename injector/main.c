@@ -65,11 +65,14 @@ void setup_cheats(void)
   __asm__ volatile("mtc0 %0, $19\n" : : "r"((1 << 30)));
 }
 
+#define SM64_COINS ((volatile unsigned short*)0x8033B218)
+
 int main(void)
 {
   FILE *payload_file = NULL;
   size_t payload_size = 0;
   size_t bytes_read = 0;
+  joypad_buttons_t buttons;
 
   console_init();
   console_set_render_mode(RENDER_AUTOMATIC);
@@ -116,14 +119,22 @@ int main(void)
   data_cache_writeback_invalidate_all();
   inst_cache_invalidate_all();
 
-  printf("Payload read successfully.\n");
+  printf("Payload read successfully.\n\n");
+  printf("Press L to test the payload, or RESET to exit.\n");
+
+  joypad_init();
+  while (1)
+  {
+    joypad_poll();
+    buttons = joypad_get_buttons_pressed(JOYPAD_PORT_1);
+    if (buttons.l)
+      break;
+  }
 
   printf("Jumping to payload...\n");
-
   void (*payload_entry)(void) = (void*)0x80400000;
   payload_entry();
-
-  printf("\nPayload tested successfully!\n");
+  printf("\nPayload tested successfully! Result: %u\n", *SM64_COINS);
 
   return 0;
 }

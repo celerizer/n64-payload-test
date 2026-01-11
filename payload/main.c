@@ -127,11 +127,13 @@ static cl_error cln_abi_user_data(cl_user_t *user, unsigned index)
   cl64_usb_transmit("", CL64_DATATYPE_REQUEST_USER_INFO, 0);
   cl64_usb_receive(buffer, sizeof(buffer));
 
-  user->password[0] = '\0';
   if (!cl_json_get(user->username, buffer, CL_JSON_KEY_USERNAME,
-        CL_JSON_TYPE_STRING, sizeof(user->username)) ||
-      !cl_json_get(user->token, buffer, CL_JSON_KEY_TOKEN_CLINT,
-        CL_JSON_TYPE_STRING, sizeof(user->token)))
+        CL_JSON_TYPE_STRING, sizeof(user->username)))
+    return CL_ERR_USER_CONFIG;
+  if (!cl_json_get(user->token, buffer, CL_JSON_KEY_TOKEN_CLINT,
+        CL_JSON_TYPE_STRING, sizeof(user->token)) &&
+      !cl_json_get(user->password, buffer, CL_JSON_KEY_PASSWORD,
+        CL_JSON_TYPE_STRING, sizeof(user->password)))
     return CL_ERR_USER_CONFIG;
 
   return CL_OK;
