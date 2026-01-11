@@ -15,11 +15,13 @@ CFLAGS := \
     -fdata-sections \
     -fno-stack-protector \
     -fno-pic \
+    -fno-pie \
+    -mno-shared \
     -fomit-frame-pointer \
-    -Iultralib/include \
     -I. \
     -Os -Wall \
     -DLIBDRAGON=1 \
+    -DCL_HAVE_SSL=0 \
     -DN64 \
     -Ilibretro-common/include \
     -I$(N64_INCLUDEDIR) \
@@ -30,9 +32,7 @@ LDFLAGS := \
     -lc -lm -ldragon \
     -Wl,--gc-sections
 
-SRC_DIRS := \
-    . \
-    N64-UNFLoader \
+SRC_DIRS := .
 
 C_SRCS := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
 

@@ -1,12 +1,17 @@
+#include "usb.h"
+
 #include "classicslive-integration/cl_abi.h"
+#include "classicslive-integration/cl_json.h"
 #include "classicslive-integration/cl_main.h"
-#include "N64-UNFLoader/usb.h"
+#include "classicslive-integration/cl_memory.h"
+#include "classicslive-integration/cl_network.h"
 
 #include <stdio.h>
 #include <string.h>
 
 #define CLN_STACK ((volatile signed char*)0x80600000)
 
+/** @todo remove */
 #define SM64_COINS ((volatile unsigned short*)0x8033B218)
 #define SM64_LIVES ((volatile signed char*)0x8033B21D)
 
@@ -18,18 +23,32 @@ typedef enum {
 
 static volatile cln_state_t cln_state = CLN_STATE_UNINITIALIZED;
 static volatile unsigned int cl_stack_backup = 0;
+static volatile unsigned int cl_gp_backup = 0;
+static volatile unsigned int cln_boot_frames = 0;
 
 static cl_error cln_abi_display_message(unsigned level, const char *msg)
 {
-  /* Ignore messages for now */
-  (void)level;
-  (void)msg;
+  char buffer[512];
+  const char *level_str;
 
-  return 0;
+  switch (level)
+  {
+    case CL_MSG_DEBUG: level_str = "[DEBUG] "; break;
+    case CL_MSG_INFO: level_str = "[INFO ] "; break;
+    case CL_MSG_WARN: level_str = "[WARN ] "; break;
+    case CL_MSG_ERROR: level_str = "[ERROR] "; break;
+    default: level_str = "[UNKWN] "; break;
+  };
+
+  snprintf(buffer, sizeof(buffer), "%s%s\n", level_str, msg);
+  cl64_usb_transmit(buffer, CL64_DATATYPE_MESSAGE_DEBUG + level,
+    strlen(buffer) + 1);
+
+  return CL_OK;
 }
 
 static cl_memory_region_t cln_region;
-static cl_error result = 123;
+static cl_error result = 0;
 
 static cl_error cln_abi_install_memory_regions(cl_memory_region_t **regions,
   unsigned *region_count)
@@ -46,9 +65,10 @@ static cl_error cln_abi_install_memory_regions(cl_memory_region_t **regions,
   regions[0]->size = CL_MB(4);
   regions[0]->pointer_length = 4;
   regions[0]->endianness = CL_ENDIAN_BIG;
+  snprintf(cln_region.title, sizeof(cln_region.title), "N64 RDRAM");
   *region_count = 1;
 
-  return 0;
+  return CL_OK;
 }
 
 static cl_error cln_abi_library_name(const char **name)
@@ -60,11 +80,25 @@ static cl_error cln_abi_library_name(const char **name)
 static cl_error cln_abi_network_post(const char *url, char *post_data,
   cl_network_cb_t callback, void *userdata)
 {
-  if (!usb_write(DATATYPE_TEXT, url, strlen(url) + 1) ||
-      !usb_write(DATATYPE_TEXT, post_data, strlen(post_data) + 1))
-    return CL_ERR_CLIENT_RUNTIME;
-  else
-    return CL_OK;
+  cl_network_response_t response;
+  char send_buffer[512];
+  char recv_buffer[512];
+
+  response.error_code = 0;
+  response.error_msg = NULL;
+
+  snprintf(send_buffer, sizeof(send_buffer), "%s\n%s",
+    url, post_data ? post_data : "");
+  cl64_usb_transmit(send_buffer, CL64_DATATYPE_NETWORK_POST,
+    strlen(send_buffer) + 1);
+
+  cl64_usb_receive(recv_buffer, sizeof(recv_buffer));
+  response.data = recv_buffer;
+
+  if (callback)
+    callback(response, userdata);
+
+  return CL_OK;
 }
 
 static cl_error cln_abi_set_pause(unsigned mode)
@@ -74,11 +108,11 @@ static cl_error cln_abi_set_pause(unsigned mode)
 
 static cl_error cln_abi_thread(cl_task_t *task)
 {
+  /* Run tasks immediately */
   task->error = NULL;
   task->handler(task);
   if (task->callback)
     task->callback(task->state);
-
   if (task->state)
     free(task->state);
   free(task);
@@ -88,10 +122,17 @@ static cl_error cln_abi_thread(cl_task_t *task)
 
 static cl_error cln_abi_user_data(cl_user_t *user, unsigned index)
 {
-  snprintf(user->username, sizeof(user->username), "clint");
-  snprintf(user->password, sizeof(user->password), "coffeecoffeefrog123");
-  user->token[0] = '\0';
-  snprintf(user->language, sizeof(user->language), "en_US");
+  char buffer[256];
+
+  cl64_usb_transmit("", CL64_DATATYPE_REQUEST_USER_INFO, 0);
+  cl64_usb_receive(buffer, sizeof(buffer));
+
+  user->password[0] = '\0';
+  if (!cl_json_get(user->username, buffer, CL_JSON_KEY_USERNAME,
+        CL_JSON_TYPE_STRING, sizeof(user->username)) ||
+      !cl_json_get(user->token, buffer, CL_JSON_KEY_TOKEN_CLINT,
+        CL_JSON_TYPE_STRING, sizeof(user->token)))
+    return CL_ERR_USER_CONFIG;
 
   return CL_OK;
 }
@@ -117,36 +158,75 @@ void cln_run(void)
 {
   if (cln_state == CLN_STATE_UNINITIALIZED)
   {
-    result = cl_abi_register(&cln_abi);
+    if (cln_boot_frames < 120)
+    {
+      /* Wait for some frames to pass to allow USB initialization */
+      cln_boot_frames++;
+      return;
+    }
+    int error = 0;
+
+    result += 10;
+
+    /* Try USB initialize */
+    error = cl64_usb_init();
+    if (error != CL_OK)
+    {
+      cln_state = CLN_STATE_ERROR;
+      return;
+    }
+    result += 10;
+
+    /* Try ABI register */
+    error = cl_abi_register(&cln_abi);
+    if (error != CL_OK)
+    {
+      cln_state = CLN_STATE_ERROR;
+      result += error;
+      return;
+    }
+    result += 10;
+
+    /* Try login */
+    cl_game_identifier_t identifier;
+    identifier.type = CL_GAMEIDENTIFIER_FILE_HASH;
+    snprintf(identifier.filename, sizeof(identifier.filename),
+      "SummerCart64.z64");
+    snprintf(identifier.checksum, sizeof(identifier.checksum),
+      "20b854b239203baf6c961b850a4a51a2");
+    error = cl_login_and_start(identifier);
+    if (error != CL_OK)
+    {
+      cln_state = CLN_STATE_ERROR;
+      result += error;
+      return;
+    }
+    result += 10;
+    result += session.state;
+
     cln_state = CLN_STATE_INITIALIZED;
   }
-  else if (cln_state == CLN_STATE_INITIALIZED)
+  else if (cln_state == CLN_STATE_ERROR)
     *SM64_COINS = result;
+  else if (cln_state == CLN_STATE_INITIALIZED)
+    cl_run();
 }
 
 __attribute__((used, noinline, optimize("O0")))
 void _start(void)
 {
   asm volatile (
-    /* --------------------------------------------------------- */
-    /* No compiler prologue / epilogue allowed                   */
-    /* We own EVERYTHING from here on                            */
-    /* --------------------------------------------------------- */
     ".set noreorder\n"
 
-    /* --------------------------------------------------------- */
-    /* Save original stack pointer                               */
-    /* --------------------------------------------------------- */
+    /* Save the stack/global pointer of the calling thread in static memory */
     "sw     $sp, cl_stack_backup\n"
+    "sw     $gp, cl_gp_backup\n"
 
-    /* --------------------------------------------------------- */
-    /* Switch to private stack                                   */
-    /* --------------------------------------------------------- */
-    "lui   $sp, 0x8060\n"
+    /* Switch to our own stack/global pointer */
+    "lui    $sp, 0x8060\n"
+    "la     $gp, _gp\n"
 
-    /* --------------------------------------------------------- */
-    /* Save all GPRs                                             */
-    /* --------------------------------------------------------- */
+    /* Save every register */
     ".set noat\n"
     "addiu  $sp, $sp, -128\n"
     "sw     $at,   0($sp)\n"
@@ -178,15 +258,11 @@ void _start(void)
     "sw     $fp, 104($sp)\n"
     "sw     $ra, 108($sp)\n"
 
-    /* --------------------------------------------------------- */
-    /* Call into C                                               */
-    /* --------------------------------------------------------- */
+    /* Run our C function */
     "jal    cln_run\n"
     "nop\n"
 
-    /* --------------------------------------------------------- */
-    /* Restore all GPRs                                          */
-    /* --------------------------------------------------------- */
+    /* Restore every register */
     "lw     $at,   0($sp)\n"
     "lw     $v0,   4($sp)\n"
     "lw     $v1,   8($sp)\n"
@@ -217,14 +293,11 @@ void _start(void)
     "lw     $ra, 108($sp)\n"
     "addiu  $sp, $sp, 128\n"
 
-    /* --------------------------------------------------------- */
-    /* Restore original stack pointer                            */
-    /* --------------------------------------------------------- */
+    /* Restore the original stack pointer */
     "lw     $sp, cl_stack_backup\n"
+    "lw     $gp, cl_gp_backup\n"
 
-    /* --------------------------------------------------------- */
-    /* Return to game                                            */
-    /* --------------------------------------------------------- */
+    /* Return to game -- The compiler will output a JR RA here */
     ".set at\n"
     ".set reorder\n"
   );

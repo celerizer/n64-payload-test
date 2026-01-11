@@ -1030,6 +1030,7 @@ void *sbrk( int incr )
     prev_heap_end = __heap_end;
     __heap_end += incr;
 
+#if 0
     // check if out of memory
     if (__heap_end > __heap_top)
     {
@@ -1044,6 +1045,7 @@ void *sbrk( int incr )
         write( STDERR_FILENO, warning, sizeof(warning) - 1 );
         __expanded_memory_asserted = true; // only emit the warning once
     }
+#endif
 
     enable_interrupts();
 

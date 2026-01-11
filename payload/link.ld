@@ -22,7 +22,7 @@ SECTIONS
     *(.data*)
   }
 
-  /* Small data — GP-relative */
+  /* Small data - GP-relative */
   .sdata : {
     __sdata_start = .;
     *(.sdata*)
