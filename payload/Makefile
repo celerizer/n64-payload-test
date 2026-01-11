@@ -21,6 +21,7 @@ CFLAGS := \
     -I. \
     -Os -Wall \
     -DLIBDRAGON=1 \
+    -DCL_HAVE_MD5=0 \
     -DCL_HAVE_SSL=0 \
     -DN64 \
     -Ilibretro-common/include \
